@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor Readings</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }
+        h1 { color: #333; }
+        .reading { font-size: 1.5em; color: #007BFF; }
+        .button-container { margin-top: 20px; }
+        button {
+            background-color: #007BFF;
+            color: white;
+            padding: 12px 25px;
+            font-size: 1.2em;
+            border: none;
+            cursor: pointer;
+            margin: 10px;
+            border-radius: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        .readings-list {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        .reading-item {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            font-size: 1.1em;
+            color: #333;
+        }
+        .reading-item p {
+            margin: 5px 0;
+        }
+        .search-container {
+            margin-top: 20px;
+        }
+        input[type="text"] {
+            padding: 10px;
+            font-size: 1em;
+            width: 200px;
+            margin: 5px;
+            border-radius: 5px;
+        }
+        input[type="datetime-local"] {
+            padding: 10px;
+            font-size: 1em;
+            width: 250px;
+            margin: 5px;
+            border-radius: 5px;
+        }
+        .loading {
+            font-size: 1.2em;
+            color: #007BFF;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Pametni zalivalni sistem</h1>
+    <p class="reading" id="sensorValue">Čakanje na podatke</p>
+    <p class="reading" id="pumpState">Čakanje na status črpalke</p>
+
+    <div class="button-container">
+        <button id="relayOnButton">ON</button>
+        <button id="relayOffButton">OFF</button>
+        <button id="autoModeButton">Samodejni način: Vklopljen</button>
+    </div>
+
+    <div class="search-container">
+        <h3>Iskanje po času:</h3>
+        <input type="datetime-local" id="searchTimestamp" />
+        <button id="searchButton">Poišči</button>
+        <div id="loading" class="loading" style="display:none;">Iskanje...</div>
+    </div>
+
+    <div id="searchResults" class="readings-list"></div>
+
+    <script>
+        var socket = io.connect("http://127.0.0.1:5000");
+        var autoMode = true;  // Default state is auto mode
+
+        // Listen for sensor updates from server
+        socket.on("sensor_update", function(data) {
+            document.getElementById("sensorValue").textContent = "Vlažnost tal: " + data.value;
+            document.getElementById("pumpState").textContent = "Status črpalke: " + data.pump_state;
+        });
+
+        // ON button: Turns the pump on
+        document.getElementById("relayOnButton").onclick = function() {
+            if (!autoMode) {
+                fetch("/control", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ state: "ON" })
+                });
+            }
+        };
+
+        // OFF button: Turns the pump off
+        document.getElementById("relayOffButton").onclick = function() {
+            if (!autoMode) {
+                fetch("/control", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ state: "OFF" })
+                });
+            }
+        };
+
+        // Toggle between Auto Mode and Manual Mode
+        document.getElementById("autoModeButton").onclick = function() {
+            autoMode = !autoMode;
+            fetch("/control", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ auto: autoMode })
+            });
+            this.textContent = "Samodejni način: " + (autoMode ? "Vklopljen" : "Izklopljen");
+        };
+
+        // Format timestamp into DD/MM/YYYY HH:MM format
+        function formatTimestampForSearch(dateString) {
+            var date = new Date(dateString);
+            var day = ('0' + date.getDate()).slice(-2);  // Ensures two digits
+            var month = ('0' + (date.getMonth() + 1)).slice(-2);  // Month is zero-indexed
+            var year = date.getFullYear();
+            var hours = ('0' + date.getHours()).slice(-2);
+            var minutes = ('0' + date.getMinutes()).slice(-2);
+            return `${day}/${month}/${year} ${hours}:${minutes}`;
+        }
+
+        // Search readings by timestamp
+        document.getElementById("searchButton").onclick = function() {
+            var searchTimestamp = document.getElementById("searchTimestamp").value;
+            if (!searchTimestamp) {
+                alert("Prosim izberite čas!");
+                return;
+            }
+
+            // Format the timestamp into DD/MM/YYYY HH:MM format
+            var formattedTimestamp = formatTimestampForSearch(searchTimestamp);
+
+            // Show loading message
+            document.getElementById("loading").style.display = 'block';
+
+            fetch(`/search?timestamp=${formattedTimestamp}`)
+                .then(response => response.json())
+                .then(data => {
+                    let searchResults = document.getElementById("searchResults");
+                    searchResults.innerHTML = ""; // Clear previous results
+                    document.getElementById("loading").style.display = 'none'; // Hide loading message
+                    
+                    if (data.error) {
+                        searchResults.innerHTML = `<p style="color: red;">${data.error}</p>`;
+                    } else {
+                        data.forEach(item => {
+                            var readingItem = document.createElement("div");
+                            readingItem.classList.add("reading-item");
+                            readingItem.innerHTML = `
+                                <p><strong>Vlažnost:</strong> ${item.value}</p>
+                                <p><strong>Čas:</strong> ${item.timestamp}</p>
+                                <p><strong>Črpalka:</strong> ${item.pump_state}</p>
+                            `;
+                            searchResults.appendChild(readingItem);
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching search results:', error);
+                    document.getElementById("loading").style.display = 'none';
+                    alert("Napaka pri pridobivanju podatkov.");
+                });
+        };
+    </script>
+</body>
+</html>
